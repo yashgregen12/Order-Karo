@@ -127,20 +127,86 @@ export const createOrder = async (req, res) => {
 
 export const updateOrder = async (req, res) => {
     try {
+        const orderId = req.params.id;
+
+        // 1. Get existing order
+        const existingOrder = await Order.findById(orderId);
+        if (!existingOrder) {
+            return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        const oldQuantity = existingOrder.quantity;
+        const oldProductId = existingOrder.productId;
+
+        const newQuantity = req.body.quantity ?? oldQuantity;
+        const newProductId = req.body.productId ?? oldProductId;
+
+        // 2. If product is SAME
+        if (String(oldProductId) === String(newProductId)) {
+            const product = await Product.findById(oldProductId);
+
+            const quantityDiff = newQuantity - oldQuantity;
+
+            // If increasing order quantity → reduce stock
+            if (quantityDiff > 0) {
+                if (product.stock < quantityDiff) {
+                    return res.status(400).json({
+                        success: false,
+                        message: "Not enough stock available"
+                    });
+                }
+                product.stock -= quantityDiff;
+            }
+
+            // If decreasing order quantity → increase stock
+            if (quantityDiff < 0) {
+                product.stock += Math.abs(quantityDiff);
+            }
+
+            await product.save();
+        }
+
+        // 3. If product is CHANGED
+        else {
+            const oldProduct = await Product.findById(oldProductId);
+            const newProduct = await Product.findById(newProductId);
+
+            // Restore stock to old product
+            oldProduct.stock += oldQuantity;
+            await oldProduct.save();
+
+            // Deduct stock from new product
+            if (newProduct.stock < newQuantity) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Not enough stock in new product"
+                });
+            }
+
+            newProduct.stock -= newQuantity;
+            await newProduct.save();
+        }
+
+        // 4. Update order
         const updatedOrder = await Order.findByIdAndUpdate(
-            req.params.id,
+            orderId,
             req.body,
             { new: true, runValidators: true }
         );
-        if (!updatedOrder) {
-            return res.status(404).json({ success: false, message: "Order not found" });
-        }
-        return res.status(200).json({ success: true, data: updatedOrder });
+
+        return res.status(200).json({
+            success: true,
+            data: updatedOrder
+        });
+
     } catch (error) {
         console.error("Error updating order:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        res.status(500).json({
+            success: false,
+            message: "Internal server error"
+        });
     }
-}
+};
 
 export const deleteOrder = async (req, res) => {
     try {
